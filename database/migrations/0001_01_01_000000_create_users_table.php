@@ -18,7 +18,11 @@ return new class extends Migration
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->string('google_id')->nullable();
-            $table->string('avatar')->nullable(); // url profile pic dari Google
+            $table->string('facebook_id')->nullable(); // <-- TAMBAHKAN INI
+            // Dua avatar terpisah
+            $table->string('google_avatar')->nullable();
+            $table->string('facebook_avatar')->nullable();
+            $table->string('last_login_provider')->nullable();
             $table->rememberToken();
             $table->timestamps();
         });

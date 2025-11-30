@@ -7,52 +7,25 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Socialite\Facades\Socialite;
 use Illuminate\Support\Facades\Auth;
-
+use Illuminate\Support\Facades\Log;
 
 class AuthController extends Controller
 {
     /**
-     * SHOW REGISTER FORM
+     * SHOW LOGIN PAGE
      */
-    public function showRegistrationForm()
-    {
-        return view('tampilan.register');
-    }
-
     public function showLoginForm()
     {
         return view('tampilan.login');
     }
 
-
     /**
-     * REGISTER MANUAL
-     */
-    public function register(Request $request)
-    {
-        $request->validate([
-            'name' => 'required|min:3',
-            'email' => 'required|email|unique:users,email',
-            'password' => 'required|min:6|confirmed'
-        ]);
-
-        // Simpan user
-        User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-        ]);
-
-        // TIDAK login otomatis
-        return redirect()->route('register')->with('success', 'Pendaftaran berhasil! Silakan login.');
-    }
-
-    /**
-     * GOOGLE REDIRECT
+     * REDIRECT TO GOOGLE
      */
     public function redirectToGoogle()
     {
-        return Socialite::driver('google')->redirect();
+        // Menggunakan stateless untuk menghindari masalah sesi pada login pertama
+        return Socialite::driver('google')->stateless()->redirect();
     }
 
     /**
@@ -61,62 +34,121 @@ class AuthController extends Controller
     public function handleGoogleCallback()
     {
         try {
-            $googleUser = Socialite::driver('google')->user();
+            // Menggunakan stateless untuk konsistensi
+            $googleUser = Socialite::driver('google')->stateless()->user();
         } catch (\Exception $e) {
+            // Logging error untuk membantu debugging
+            Log::error('Google Login Error: ' . $e->getMessage());
             return redirect()->route('login')->with('error', 'Gagal login menggunakan Google.');
         }
 
-        // User berdasarkan google_id
+        // Cek user berdasarkan google_id
         $user = User::where('google_id', $googleUser->id)->first();
 
         if (!$user) {
-            // User berdasarkan email
+            // Jika tidak ditemukan, cek berdasarkan email
             $user = User::where('email', $googleUser->email)->first();
 
             if ($user) {
-                // Update google_id + avatar
-                $user->google_id = $googleUser->id;
-                $user->avatar    = $googleUser->avatar ?? $googleUser->getAvatar();
-                $user->save();
+                // Jika user ada berdasarkan email, update data Google-nya
+                $user->update([
+                    'google_id'      => $googleUser->id,
+                    'google_avatar'  => $googleUser->getAvatar(),
+                    'last_login_provider' => 'google', // Catat provider login terakhir
+                ]);
             } else {
-                // Buat user baru
+                // Jika tidak ada, buat user baru
                 $user = User::create([
-                    'name'      => $googleUser->name,
-                    'email'     => $googleUser->email,
-                    'google_id' => $googleUser->id,
-                    'avatar'    => $googleUser->avatar ?? $googleUser->getAvatar(),
-                    'password'  => Hash::make('google_' . uniqid()),
+                    'name'           => $googleUser->name,
+                    'email'          => $googleUser->email,
+                    'password'       => Hash::make('google_' . uniqid()),
+                    'google_id'      => $googleUser->id,
+                    'google_avatar'  => $googleUser->getAvatar(),
+                    'last_login_provider' => 'google', // Set provider awal
                 ]);
             }
+        } else {
+            // Jika user ditemukan berdasarkan google_id, update avatar dan provider
+            $user->update([
+                'google_avatar' => $googleUser->getAvatar(),
+                'last_login_provider' => 'google',
+            ]);
         }
 
-        // Login otomatis
         Auth::login($user);
 
-        return redirect('/dashboard')->with('success', 'Berhasil login dengan Google!');
+        return redirect('/dashboard')->with('success', 'Login Google berhasil!');
     }
 
-
-    public function login(Request $request)
+    /**
+     * REDIRECT TO FACEBOOK
+     */
+    public function redirectToFacebook()
     {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required|min:6',
-        ]);
+        // Menggunakan stateless untuk menghindari masalah sesi
+        return Socialite::driver('facebook')->stateless()->redirect();
+    }
 
-        $credentials = $request->only('email', 'password');
-
-        if (Auth::attempt($credentials, $request->remember)) {
-            $request->session()->regenerate();
-
-            return redirect()->intended('/')->with('success', 'Berhasil login!');
+    /**
+     * FACEBOOK CALLBACK
+     */
+    public function handleFacebookCallback()
+    {
+        try {
+            // Menggunakan stateless untuk konsistensi
+            $fbUser = Socialite::driver('facebook')->stateless()->user();
+        } catch (\Exception $e) {
+            // Logging error untuk membantu debugging
+            Log::error('Facebook Login Error: ' . $e->getMessage());
+            return redirect()->route('login')->with('error', 'Gagal login menggunakan Facebook.');
         }
 
-        return back()->withErrors([
-            'email' => 'Email atau password salah.',
-        ])->onlyInput('email');
+        // Email fallback jika Facebook tidak menyediakannya
+        $email = $fbUser->email ?? "fb_{$fbUser->id}@facebook.local";
+        // Avatar fallback
+        $avatar = $fbUser->avatar_original ?? $fbUser->avatar ?? null;
+
+        // Cek user berdasarkan facebook_id
+        $user = User::where('facebook_id', $fbUser->id)->first();
+
+        if (!$user) {
+            // Jika tidak ditemukan, cek berdasarkan email
+            $user = User::where('email', $email)->first();
+
+            if ($user) {
+                // Jika user ada berdasarkan email, update data Facebook-nya
+                $user->update([
+                    'facebook_id'     => $fbUser->id,
+                    'facebook_avatar' => $avatar,
+                    'last_login_provider' => 'facebook', // Catat provider login terakhir
+                ]);
+            } else {
+                // Jika tidak ada, buat user baru
+                $user = User::create([
+                    'name'            => $fbUser->name,
+                    'email'           => $email,
+                    'password'        => Hash::make('facebook_' . uniqid()),
+                    'facebook_id'     => $fbUser->id,
+                    'facebook_avatar' => $avatar,
+                    'last_login_provider' => 'facebook', // Set provider awal
+                ]);
+            }
+        } else {
+            // Jika user ditemukan berdasarkan facebook_id, update avatar dan provider
+            $user->update([
+                'facebook_avatar' => $avatar,
+                'last_login_provider' => 'facebook',
+            ]);
+        }
+
+        Auth::login($user);
+
+        return redirect('/dashboard')->with('success', 'Login Facebook berhasil!');
     }
 
+    /**
+     * LOGOUT
+     */
     public function logout(Request $request)
     {
         Auth::logout();

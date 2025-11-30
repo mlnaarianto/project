@@ -33,6 +33,15 @@
     @include('tampilan.footer')
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    
     @stack('scripts')
+
+     {{-- 🚀 FIX untuk Facebook login (#_=_) --}}
+    <script>
+        if (window.location.hash === "#_=_") {
+            history.replaceState(null, null, window.location.pathname + window.location.search);
+        }
+    </script>
+
 </body>
 </html>
